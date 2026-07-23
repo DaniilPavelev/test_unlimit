@@ -13,6 +13,7 @@ public class IncidentProperties {
 
     private final History history = new History();
     private final Memory memory = new Memory();
+    private final Llm llm = new Llm();
     private final Prompts prompts = new Prompts();
     private List<String> knowledge = new ArrayList<>();
 
@@ -31,6 +32,12 @@ public class IncidentProperties {
     public static class Memory {
         private int maxSelectedItems = 3;
         private int maxContextCharacters = 4000;
+    }
+
+    @Getter
+    @Setter
+    public static class Llm {
+        private int maxAttempts = 2;
     }
 
     @Getter

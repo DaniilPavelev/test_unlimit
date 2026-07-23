@@ -80,6 +80,7 @@ class IncidentAnalysisOrchestratorRecoveryTest {
     private IncidentAnalysisOrchestrator orchestrator(LlmClient llm) {
         JsonMapper mapper = JsonMapper.builder().build();
         return new IncidentAnalysisOrchestrator(
+                properties,
                 new InputNormalizerService(),
                 new SignalExtractorService(),
                 knowledgeBaseService,

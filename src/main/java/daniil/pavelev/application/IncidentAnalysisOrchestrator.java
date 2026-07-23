@@ -1,5 +1,6 @@
 package daniil.pavelev.application;
 
+import daniil.pavelev.config.IncidentProperties;
 import daniil.pavelev.domain.AnalysisMetadata;
 import daniil.pavelev.domain.IncidentAnalysis;
 import daniil.pavelev.domain.IncidentSignals;
@@ -32,9 +33,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class IncidentAnalysisOrchestrator {
 
-    private static final int MAX_ATTEMPTS = 2;
     private static final Logger log = LoggerFactory.getLogger(IncidentAnalysisOrchestrator.class);
 
+    private final IncidentProperties properties;
     private final InputNormalizerService inputNormalizerService;
     private final SignalExtractorService signalExtractorService;
     private final KnowledgeBaseService knowledgeBaseService;
@@ -62,8 +63,9 @@ public class IncidentAnalysisOrchestrator {
         String userPrompt = prompt.userPrompt();
         LlmAnalysisPayload payload = null;
         int attempts = 0;
+        int maxAttempts = properties.getLlm().getMaxAttempts();
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             attempts = attempt;
             log.info("stage=llm-call analysisId={} attempt={}", analysisId, attempt);
             String raw = llmClient.complete(systemPrompt, userPrompt).content();
@@ -77,9 +79,9 @@ public class IncidentAnalysisOrchestrator {
                         ? invalid.getValidationErrors()
                         : List.of(ex.getMessage() == null ? "parse failed" : ex.getMessage());
                 log.info("stage=validate analysisId={} attempt={} success=false errors={}", analysisId, attempt, errors);
-                if (attempt == MAX_ATTEMPTS) {
+                if (attempt == maxAttempts) {
                     throw new InvalidLlmOutputException(
-                            "LLM output remained invalid after " + MAX_ATTEMPTS + " attempts",
+                            "LLM output remained invalid after " + maxAttempts + " attempts",
                             errors
                     );
                 }

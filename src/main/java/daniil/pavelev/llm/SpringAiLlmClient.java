@@ -10,9 +10,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 
-/**
- * LLM adapter over Spring AI {@link ChatClient} (OpenAI-compatible).
- */
 @Component
 @RequiredArgsConstructor
 public class SpringAiLlmClient implements LlmClient {

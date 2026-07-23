@@ -14,3 +14,5 @@ incident:
   memory:
     max-selected-items: 3
     max-context-characters: 4000
+  llm:
+    max-attempts: 2

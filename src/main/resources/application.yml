@@ -40,6 +40,8 @@ incident:
   memory:
     max-selected-items: ${INCIDENT_MEMORY_MAX_SELECTED_ITEMS:3}
     max-context-characters: ${INCIDENT_MEMORY_MAX_CONTEXT_CHARACTERS:4000}
+  llm:
+    max-attempts: ${INCIDENT_LLM_MAX_ATTEMPTS:2}
   knowledge:
     - "api-gateway: Receives external HTTP requests and routes them to internal services."
     - "auth-service: Handles authentication and token issuance."

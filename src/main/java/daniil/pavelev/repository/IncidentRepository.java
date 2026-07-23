@@ -12,10 +12,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Thread-safe bounded in-memory history. Lost on restart by design.
- * LinkedHashMap is used only to evict the oldest inserted entry when the limit is exceeded.
- */
 @Component
 @RequiredArgsConstructor
 public class IncidentRepository {
