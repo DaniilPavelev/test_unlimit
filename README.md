@@ -1,207 +1,168 @@
-# Incident analysis with persistent history and bounded LLM memory
+# AI Incident Assistant
 
-Spring Boot application that analyzes incidents with an LLM while storing the **complete** analysis history in PostgreSQL. The LLM never receives the full history: only a small, relevance-ranked, budget-limited memory slice is included in each prompt.
+Compact Spring Boot take-home service that helps on-call engineers analyze manually submitted production incidents with a controlled LLM pipeline.
+
+## Purpose
+
+An engineer pastes an incident description. The service returns:
+
+- category
+- concise summary (what is happening / who is affected)
+- severity (`LOW` | `MEDIUM` | `HIGH`)
+- 1–3 root-cause hypotheses with reasoning and 2–3 diagnostic next steps
+
+This is **not** live monitoring. There is no ELK/Prometheus/Grafana integration and no automatic remediation.
 
 ## Stack
 
-- Java 25
-- Spring Boot 4.1.0
-- Spring Data JPA
-- PostgreSQL
-- Flyway
-- Testcontainers (repository / integration tests)
+- Java **25**
+- Spring Boot **4.1.0**
+- Spring MVC + Validation
+- Thymeleaf demonstration UI
+- **Spring AI 2.0** (`spring-ai-starter-model-openai`) via `ChatClient`
+- Actuator health
+- springdoc OpenAPI
 
-## What is stored
+No PostgreSQL, JPA, Flyway, Testcontainers, Kafka or Redis.
 
-Each analysis is persisted as `IncidentAnalysisEntity` with:
+## Architecture
 
-- identifiers and timestamps (`id`, `createdAt`, `completedAt`)
-- `originalDescription` / `normalizedDescription` (credentials redacted during normalization)
-- `category`, `summary`, `severity`, `status`
-- LLM metadata: `model`, `llmAttempts`, token counts, `processingDurationMs`, `errorCode`
-- ordered hypotheses and next steps
-- extracted signals: mentioned services, provider names, HTTP status codes, keywords, affected functionality
-
-**Not stored:** API keys, authorization headers, or raw provider credentials. Matching credential-like patterns are redacted to `[REDACTED]` before persistence and prompting.
-
-Original analysis rows are retained indefinitely by the application (no automatic deletion). Aggregate compaction **never** deletes or replaces them.
-
-## Retention behavior
-
-- Full incident analyses remain in `incident_analyses` (and related collections) as the system of record.
-- Compaction marks source rows as `compacted=true` and writes a separate `aggregate_memories` row.
-- Compaction is additive long-term memory, not archival deletion.
-- Operators remain responsible for legal/privacy retention policies outside this service.
-
-## History endpoints
-
-### `POST /api/v1/incident-analyses`
-
-Creates a new analysis: normalize → extract signals → retrieve bounded memory → call LLM → persist complete result.
-
-### `GET /api/v1/incident-analyses`
-
-Paginated history. Query parameters:
-
-| Parameter | Description |
-|-----------|-------------|
-| `page` | Zero-based page index |
-| `size` | Page size (capped by `incident.history.max-page-size`, default max 100) |
-| `category` | Filter |
-| `severity` | Filter |
-| `service` | Filter by mentioned service |
-| `provider` | Filter by provider name |
-| `status` | Filter |
-| `createdFrom` / `createdTo` | ISO-8601 timestamps |
-
-Response shape:
-
-```json
-{
-  "items": [ /* list items without full hypotheses */ ],
-  "page": 0,
-  "size": 20,
-  "totalElements": 42,
-  "totalPages": 3
-}
+```mermaid
+flowchart TD
+  UI[Thymeleaf UI / curl] --> API[IncidentAnalysisController]
+  API --> SVC[IncidentAnalysisService]
+  SVC --> ORCH[IncidentAnalysisOrchestrator]
+  ORCH --> N[Normalize]
+  N --> S[Extract signals]
+  S --> K[Select static knowledge]
+  K --> HIST[Select similar history]
+  HIST --> P[Build prompt]
+  P --> LLM[SpringAiLlmClient / ChatClient]
+  LLM --> PARSE[Extract + parse JSON]
+  PARSE --> VAL[Validate]
+  VAL -->|invalid once| REPAIR[Repair prompt]
+  REPAIR --> LLM
+  VAL -->|valid| STORE[IncidentRepository]
+  STORE --> API
 ```
 
-List items intentionally omit full hypotheses; use the detail endpoint for the complete analysis.
+### Explicit agent stages
 
-### `GET /api/v1/incident-analyses/{analysisId}`
+1. Validate request (Bean Validation)
+2. Normalize description
+3. Extract deterministic signals
+4. Select relevant static system knowledge
+5. Select up to 3 relevant previous analyses from in-memory history
+6. Build prompt with trusted/untrusted delimiters
+7. Call LLM
+8. Extract JSON (quote/brace aware)
+9. Deserialize into typed model
+10. Validate business rules
+11. One repair attempt if needed
+12. Parse/validate again
+13. Return API DTO
+14. Save into bounded in-memory history
 
-Returns the complete analysis, including hypotheses, next steps, and signals.
+The LLM is only one stage. Controllers never build prompts or call the model.
 
-### `GET /api/v1/incident-statistics`
+## Static knowledge
 
-Returns **deterministic** database-calculated statistics (no LLM):
+Configured in `application.yml` under `incident.knowledge`.
 
-- total / completed analyses
-- counts by category and severity
-- most frequently mentioned services and providers
-- analyses over time (daily buckets)
+## Lightweight history
 
-## Relevance algorithm
+`IncidentRepository` keeps at most 100 analyses in memory (newest eviction of oldest).
+Similar history matching uses explainable scores: service +5, provider +4, HTTP status +2, indicator +1.
 
-`IncidentMemoryRetriever` implements `MemoryRetrievalStrategy` (swap-friendly for future embeddings / pgvector).
+- history is lost after restart
+- only for demonstration
+- the LLM never receives the full history — only up to 3 compact entries under a character budget
 
-For each new incident:
+## LLM (Spring AI)
 
-1. Normalize input and redact secrets
-2. Extract deterministic signals
-3. Load completed analyses in the lookback window
-4. Score candidates with explainable weights:
-   - same mentioned service: **+5**
-   - same provider: **+4**
-   - same category: **+3**
-   - same HTTP status: **+2**
-   - shared keyword: **+1**
-   - recent incident bonus: configurable (`memory.retrieval.recent-bonus`)
-5. Keep at most `memory.retrieval.max-incidents` (default **5**)
-6. Select at most `memory.retrieval.max-aggregate-memories` (default **2**) aggregate memories
-7. Enforce `memory.retrieval.max-context-characters` (default **6000**)
-8. Pass only compact entries to the LLM
+OpenAI-compatible calls go through Spring AI `ChatClient` (`SpringAiLlmClient`).
 
-A compact memory entry contains only: category, summary, severity, matching services/providers, and useful diagnostic steps.
-
-## Context budget
-
-When the estimated context size exceeds the budget, reduction is applied in order:
-
-1. Drop lowest-ranked historical incidents
-2. Drop lower-ranked aggregate memories
-3. Shorten summaries
-4. Remove lower-ranked diagnostic steps
-
-Size is estimated deterministically from serialized JSON length (no tokenizer required). Entries are rewritten as whole objects so JSON is never truncated into invalid fragments.
-
-## Why full history is not sent to the LLM
-
-- Cost and latency grow with prompt size
-- Noise from unrelated incidents degrades analysis quality
-- Privacy: minimize data exposure to the model
-- Controllability: retrieval scores and budgets are inspectable
-
-The final LLM context may include only:
-
-- the current incident
-- small static system knowledge
-- up to five similar historical analyses
-- up to two relevant aggregate memories
-
-## Compaction
-
-Configuration:
-
-```properties
-memory.compaction.enabled=true
-memory.compaction.batch-size=50
-memory.compaction.minimum-pending=10
-memory.compaction.cron=0 0 2 * * *
-memory.compaction.max-source-items-per-run=200
+```bash
+LLM_API_KEY=sk-... \
+LLM_BASE_URL=https://api.openai.com \
+LLM_MODEL=gpt-4o-mini \
+./gradlew bootRun
 ```
 
-A run starts only when at least `minimum-pending` uncompacted completed analyses exist after the durable checkpoint.
+`LLM_API_KEY` is required. Tests replace `LlmClient` with an offline stub and never call a real model.
 
-- Numeric aggregates (category/severity/service/provider counts) are computed in Java
-- The LLM only summarizes textual patterns (recurring causes / diagnostics)
-- Source analyses are never deleted
-- Failed runs roll back and leave sources unmarked for retry
-- Scheduled compaction does not block user analysis requests
-- A DB row lock prevents concurrent compaction on **one** application instance
+## Validation and repair
 
-### Multi-instance limitation
+Output must match the schema and business rules. Language check is a lightweight heuristic (Latin letters required; Cyrillic rejected) and can false-negative on unusual English.
 
-The current lock is adequate for a single instance. Multiple instances require a **distributed lock** (e.g. ShedLock, Redis, or PostgreSQL advisory locks coordinated across nodes).
+If the first response is invalid, exactly one repair request is made. A second failure becomes HTTP 422.
 
-## Deterministic statistics vs LLM text
-
-| Concern | Owner |
-|---------|--------|
-| Counts, rankings, time series | SQL / Java only |
-| Incident summary / hypotheses / next steps | LLM |
-| Aggregate recurring textual patterns | LLM compaction (text only) |
-| Aggregate numeric counts | Java only |
-
-## Vector search
-
-This release uses weighted lexical/signal matching only. There is **no** vector database.
-
-A future `MemoryRetrievalStrategy` implementation can add pgvector embeddings while keeping the same compact-entry contract and context budget.
-
-## Privacy and data retention
-
-- Redact secrets before store/prompt
-- Prefer summaries over raw customer payloads when possible
-- Full history remains in PostgreSQL; apply org retention/deletion policies separately
-- Limit LLM exposure via retrieval caps and context budgets
-
-## Configuration (retrieval)
-
-```properties
-memory.retrieval.max-incidents=5
-memory.retrieval.max-aggregate-memories=2
-memory.retrieval.max-context-characters=6000
-memory.retrieval.lookback-days=180
-memory.retrieval.recent-bonus=1.0
-memory.retrieval.recent-days=14
-```
-
-## Failure behavior
-
-| Failure | Behavior |
-|---------|----------|
-| Persist completed analysis fails | HTTP 500; do not pretend storage succeeded |
-| Memory retrieval fails | Log and continue without historical memory |
-| Compaction fails | Preserve sources; retry later |
-| After compaction | Sources remain; only `compacted` flag + aggregate row added |
-
-## Running tests
-
-Integration tests use Testcontainers PostgreSQL. Docker must be available.
+## Run
 
 ```bash
 ./gradlew test
+./gradlew build
+LLM_API_KEY=sk-... ./gradlew bootRun
 ```
 
-Unit tests (scoring / budget) do not call a real LLM. The default `llm.mode=stub` client is deterministic and offline.
+### URLs
+
+| Resource | URL |
+|----------|-----|
+| UI | http://localhost:8080/ |
+| Swagger UI | http://localhost:8080/swagger-ui.html |
+| OpenAPI | http://localhost:8080/v3/api-docs |
+| Health | http://localhost:8080/actuator/health |
+
+### API
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/v1/incident-analyses` | 201 + Location |
+| GET | `/api/v1/incident-analyses/{id}` | 200 / 404 / 400 |
+| GET | `/api/v1/incident-analyses` | full in-memory history |
+| GET | `/actuator/health` | Actuator |
+
+### curl
+
+```bash
+curl -s -D - -X POST http://localhost:8080/api/v1/incident-analyses \
+  -H 'Content-Type: application/json' \
+  -d '{"description":"Customers cannot pay by card. payment-service logs show PayGate timeouts."}'
+
+curl -s http://localhost:8080/api/v1/incident-analyses
+```
+
+Errors use Spring Boot default HTTP status mapping (`@ResponseStatus` on domain exceptions, Bean Validation → 400).
+
+## Configuration
+
+See `.env.example` and `application.yml`:
+
+- `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (mapped to `spring.ai.openai.*`)
+- `incident.history.max-items`
+- `incident.memory.max-selected-items`
+- `incident.memory.max-context-characters`
+- `incident.prompts.*` — analysis/repair system prompts and user-section templates
+
+## Trade-offs
+
+- in-memory history instead of PostgreSQL
+- no pagination on history listing (returns the full bounded in-memory list)
+- indicator/signal matching instead of embeddings
+- no live ELK/monitoring integrations
+- approximate character budget instead of an exact tokenizer
+- one repair attempt
+- no authentication
+- minimal Thymeleaf UI
+
+## Future improvements
+
+- PostgreSQL persistence
+- proper pagination / filtering for history API
+- pgvector / embeddings
+- periodic historical-memory compaction
+- ELK and monitoring tool integrations
+- authentication / RBAC
+- metrics and tracing
+- prompt versioning and an evaluation dataset

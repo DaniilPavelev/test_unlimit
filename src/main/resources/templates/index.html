@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>AI Incident Assistant</title>
+    <link rel="stylesheet" th:href="@{/app.css}"/>
+</head>
+<body>
+<main class="page">
+    <header>
+        <h1>AI Incident Assistant</h1>
+        <p>Paste a production incident description. The assistant returns category, severity, summary and diagnostic hypotheses.</p>
+    </header>
+
+    <section class="panel">
+        <label for="description">Incident description</label>
+        <textarea id="description" rows="10" placeholder="Describe the incident…"></textarea>
+
+        <div class="actions">
+            <button id="analyze" type="button">Analyze</button>
+            <span id="loading" class="loading" hidden>Analyzing…</span>
+        </div>
+        <div id="error" class="error" hidden></div>
+    </section>
+
+    <section class="panel">
+        <h2>Result</h2>
+        <div id="result" class="result empty">No analysis yet.</div>
+    </section>
+
+    <section class="panel">
+        <h2>Recent history</h2>
+        <div id="history" class="history empty">No history yet.</div>
+    </section>
+</main>
+<script th:src="@{/app.js}"></script>
+</body>
+</html>

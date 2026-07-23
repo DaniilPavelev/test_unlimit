@@ -1,0 +1,16 @@
+spring:
+  ai:
+    openai:
+      api-key: test-key-not-used
+      base-url: https://api.openai.com
+      chat:
+        options:
+          model: gpt-4o-mini
+          temperature: 0.1
+
+incident:
+  history:
+    max-items: 50
+  memory:
+    max-selected-items: 3
+    max-context-characters: 4000

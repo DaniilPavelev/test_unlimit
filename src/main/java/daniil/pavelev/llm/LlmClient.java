@@ -2,7 +2,5 @@ package daniil.pavelev.llm;
 
 public interface LlmClient {
 
-    LlmAnalysisResponse analyze(LlmAnalysisRequest request);
-
-    LlmCompactionResponse compactTextualPatterns(LlmCompactionRequest request);
+    LlmCompletion complete(String systemPrompt, String userPrompt);
 }
