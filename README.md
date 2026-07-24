@@ -51,3 +51,22 @@ Manual / expected behavior for sample incidents:
 | 3 | Top-up emails missing; balances OK; `notification-service` **SMTP** connection errors | Category about notification delivery; severity usually MEDIUM; hypotheses about SMTP provider; next steps around SMTP health and notification-service logs |
 | 4 | `/payments/create` slow; high DB CPU from `reporting-service`; some clients get **HTTP 504** from `api-gateway` | Category about DB / reporting load; hypotheses tying latency/504 to reporting queries; next steps around DB load and reporting jobs |
 | 5 | Vague text with almost no service/provider signals | Lower confidence / generic category; summary should admit limited evidence; hypotheses should stay cautious and ask for more data |
+
+## Trade-offs
+
+### What was simplified
+- History is in-memory only (no PostgreSQL / migrations).
+- Similar-case retrieval uses deterministic signals and weighted scoring, not embeddings.
+- System knowledge is a static list in `application.yml`.
+- Past-incident context comes from accumulated history after analyses run (no separate seed dataset); cold start has empty history by design.
+- LLM repair is a small configurable retry loop (`incident.llm.max-attempts`), not a full eval / prompt-versioning setup.
+- Minimal UI and API: no auth, pagination, metrics, or live ELK / monitoring integrations.
+- Context budget is approximate (character-based), not exact token counting.
+
+### What I would do differently with more time
+- Persist history and improve retrieval (e.g. PostgreSQL + embeddings / pgvector).
+- Bootstrap with the sample past incidents from the brief, then blend them with live history.
+- API pagination/filters, auth, and a clearer error contract for clients.
+- An evaluation set of incidents and prompt/model comparison.
+- Exact token budget for context packing.
+- Observability for latency, attempt counts, and validation failures.
